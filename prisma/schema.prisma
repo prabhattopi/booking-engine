@@ -1,0 +1,42 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+provider = "postgresql"
+}
+
+model Room {
+  id          String    @id @default(uuid())
+  name        String
+  description String
+  price       Int       // Current price in cents
+  imageUrl    String
+  
+  bookings    Booking[] 
+}
+
+model Booking {
+  id              String   @id @default(uuid())
+  roomId          String
+  room            Room     @relation(fields: [roomId], references: [id])
+  
+  guestSessionId  String   // Tracks the user's browser session
+
+  // THE STATE MACHINE: PENDING, CONFIRMED, FAILED, EXPIRED
+  status          String   @default("PENDING") 
+  
+  // The TTL (Time-To-Live) for the lock
+  lockedUntil     DateTime 
+  
+  // Edge Case: Freeze the price so admin DB changes don't affect in-flight checkouts
+  priceAtBooking  Int      
+  
+  // Edge Case: Idempotency. Prevents double-processing webhooks.
+  stripeSessionId String?  @unique 
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([roomId, status]) 
+}
