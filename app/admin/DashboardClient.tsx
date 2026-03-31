@@ -4,7 +4,6 @@
 import { useState, useEffect } from "react";
 import { Activity, CheckCircle2, Lock, Unlock } from "lucide-react";
 
-// Define the shape of our data
 type AdminRoom = {
   id: string;
   name: string;
@@ -15,14 +14,13 @@ type AdminRoom = {
 export default function DashboardClient({ initialRooms }: { initialRooms: AdminRoom[] }) {
   const [rooms, setRooms] = useState<AdminRoom[]>(initialRooms);
 
-  // --- THE REAL-TIME LISTENER ---
+  // --- THE DISTRIBUTED SSE LISTENER ---
   useEffect(() => {
     const eventSource = new EventSource('/api/stream');
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       
-      // Instantly update the table row when anyone in the world books or locks a room!
       setRooms((currentRooms) => 
         currentRooms.map((room) => 
           room.id === data.roomId ? { ...room, currentStatus: data.status } : room
@@ -30,10 +28,14 @@ export default function DashboardClient({ initialRooms }: { initialRooms: AdminR
       );
     };
 
+    // Vercel auto-reconnect handling
+    eventSource.onerror = () => {
+      console.log("Admin stream refreshing...");
+    };
+
     return () => eventSource.close();
   }, []);
 
-  // Helper to render beautiful status badges
   const renderStatus = (status: string) => {
     switch (status) {
       case "AVAILABLE":

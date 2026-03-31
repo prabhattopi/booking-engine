@@ -23,7 +23,6 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
     style: "currency", currency: "USD",
   }).format(room.price / 100);
 
-  // --- THE REAL-TIME LISTENER ---
   useEffect(() => {
     const eventSource = new EventSource('/api/stream');
 
@@ -38,6 +37,13 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
         setIsLockedByOther(false);
         setError(null);
       }
+    };
+
+    // Vercel will eventually sever the connection. 
+    // This silently handles the reconnect so the user never notices.
+    eventSource.onerror = () => {
+      console.log("Stream refreshing...");
+      // EventSource automatically attempts to reconnect on its own!
     };
 
     return () => eventSource.close();

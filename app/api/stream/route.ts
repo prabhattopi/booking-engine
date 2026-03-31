@@ -1,30 +1,30 @@
 // src/app/api/stream/route.ts
-import { emitter } from '@/lib/events';
+import Redis from 'ioredis';
 
-export const dynamic = 'force-dynamic'; // Prevent Next.js from caching this route
+export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(request: Request) {
   const stream = new ReadableStream({
-    start(controller) {
-      // 1. Define what happens when a message is heard
-      const sendUpdate = (data: { roomId: string, status: string }) => {
-        // SSE requires this specific format: "data: {JSON}\n\n"
-        controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
-      };
+    async start(controller) {
+      // Create a dedicated Redis connection strictly for listening
+      const subscriber = new Redis(process.env.UPSTASH_REDIS_URL as string);
 
-      // 2. Listen to the global event bus
-      emitter.on('room_status_changed', sendUpdate);
+      // Subscribe to the channel
+      await subscriber.subscribe('room_updates');
 
-      // 3. Optional: Send an initial heartbeat so the connection doesn't drop
+      // When Redis hears a message, push it to the frontend
+      subscriber.on('message', (channel, message) => {
+        if (channel === 'room_updates') {
+          controller.enqueue(`data: ${message}\n\n`);
+        }
+      });
+
       controller.enqueue(`data: ${JSON.stringify({ status: 'connected' })}\n\n`);
 
-      // 4. Cleanup memory if the user closes their browser
-      const cleanup = () => {
-        emitter.off('room_status_changed', sendUpdate);
-      };
-      
-      // We check for connection aborts
-      // In a real production app you'd attach this to req.signal
+      // Handle client disconnects to prevent memory leaks
+      request.signal.addEventListener('abort', () => {
+        subscriber.quit();
+      });
     }
   });
 

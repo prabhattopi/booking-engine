@@ -4,7 +4,7 @@
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { emitter } from "@/lib/events";
+import { redis } from "@/lib/redis"; // <-- Import Redis!
 
 // 1. Initial Booking Lock
 export async function lockRoom(roomId: string) {
@@ -33,7 +33,7 @@ export async function lockRoom(roomId: string) {
     return { error: "Sorry, this room is currently locked or sold out." };
   }
 
-  const lockedUntil = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+  const lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
   
   const booking = await prisma.booking.create({
     data: {
@@ -45,8 +45,8 @@ export async function lockRoom(roomId: string) {
     }
   });
 
-  // Shout to the event bus that this room is now locked
-  emitter.emit('room_status_changed', { roomId: roomId, status: 'LOCKED' });
+  // 🚀 PUBLISH TO REDIS: Tell all Vercel servers this room is locked
+  await redis.publish('room_updates', JSON.stringify({ roomId: roomId, status: 'LOCKED' }));
 
   redirect(`/checkout/${booking.id}`);
 }
@@ -61,15 +61,12 @@ export async function processPayment(bookingId: string, cvv: string) {
 
   const now = new Date();
 
-  // Check if their timer ran out before they even clicked pay
   if (now > booking.lockedUntil) {
     await expireBooking(bookingId);
     return { error: "Your reservation time expired. The room has been released." };
   }
 
-  // THE SIMULATION: Failed Payment (Strict Retry Window)
   if (cvv === "999") {
-    // Truncate the hold time. Give them exactly 2 minutes from right NOW.
     const twoMinutesMs = 2 * 60 * 1000;
     const strictRetryTime = new Date(now.getTime() + twoMinutesMs);
     
@@ -80,17 +77,17 @@ export async function processPayment(bookingId: string, cvv: string) {
 
     return { 
       error: "Payment declined. We've adjusted your hold to 2:00 minutes so you can try a different card.",
-      newLockedUntil: strictRetryTime // Sent to frontend to update the clock
+      newLockedUntil: strictRetryTime 
     };
   }
 
-  // SUCCESS! Confirm the booking.
   await prisma.booking.update({
     where: { id: bookingId },
     data: { status: "CONFIRMED" }
   });
   
-  emitter.emit("room_status_changed", { roomId: booking.roomId, status: "BOOKED" });
+  // 🚀 PUBLISH TO REDIS: Room is permanently sold
+  await redis.publish('room_updates', JSON.stringify({ roomId: booking.roomId, status: 'BOOKED' }));
   return { success: true };
 }
 
@@ -102,6 +99,7 @@ export async function expireBooking(bookingId: string) {
       where: { id: bookingId },
       data: { status: "EXPIRED" }
     });
-    emitter.emit("room_status_changed", { roomId: booking.roomId, status: "AVAILABLE" });
+    // 🚀 PUBLISH TO REDIS: Room is available again
+    await redis.publish('room_updates', JSON.stringify({ roomId: booking.roomId, status: 'AVAILABLE' }));
   }
 }

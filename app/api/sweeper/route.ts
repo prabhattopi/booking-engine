@@ -1,6 +1,6 @@
 // src/app/api/sweeper/route.ts
 import { prisma } from "@/lib/prisma";
-import { emitter } from "@/lib/events";
+import { redis } from "@/lib/redis"; // <-- Import our new Redis utility
 import { NextResponse } from "next/server";
 
 export const dynamic = 'force-dynamic';
@@ -21,8 +21,8 @@ export async function GET() {
       data: { status: "EXPIRED" }
     });
     
-    // Broadcast to SSE so UI updates instantly
-    emitter.emit("room_status_changed", { roomId: booking.roomId, status: "AVAILABLE" });
+    // 🚀 PUBLISH TO REDIS: Tell all Vercel edge nodes that this room is free!
+    await redis.publish("room_updates", JSON.stringify({ roomId: booking.roomId, status: "AVAILABLE" }));
   }
 
   return NextResponse.json({ clearedCount: expiredBookings.length });
