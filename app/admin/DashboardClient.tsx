@@ -13,9 +13,25 @@ type AdminRoom = {
 
 export default function DashboardClient({ initialRooms }: { initialRooms: AdminRoom[] }) {
   const [rooms, setRooms] = useState<AdminRoom[]>(initialRooms);
+  
+  // 🛑 THE OPTIMIZATION: Track if the Admin is actually looking at the dashboard
+  const [isTabActive, setIsTabActive] = useState(true);
 
-  // --- THE DISTRIBUTED SSE LISTENER ---
+  // --- 1. THE VISIBILITY TRACKER ---
   useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsTabActive(document.visibilityState === 'visible');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  // --- 2. THE DISTRIBUTED SSE LISTENER ---
+  useEffect(() => {
+    // If Admin tab is in the background, pause the network to save Upstash limits!
+    if (!isTabActive) return;
+
     const eventSource = new EventSource('/api/stream');
 
     eventSource.onmessage = (event) => {
@@ -34,7 +50,7 @@ export default function DashboardClient({ initialRooms }: { initialRooms: AdminR
     };
 
     return () => eventSource.close();
-  }, []);
+  }, [isTabActive]); // <-- Dependency added here!
 
   const renderStatus = (status: string) => {
     switch (status) {
@@ -52,17 +68,17 @@ export default function DashboardClient({ initialRooms }: { initialRooms: AdminR
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+    <div className="bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl mb-8">
       <div className="p-6 border-b border-slate-700 bg-slate-800/50 flex items-center justify-between">
         <h2 className="text-xl font-bold text-white flex items-center gap-2">
           <Activity className="text-blue-400" /> Live Inventory
         </h2>
         <span className="flex items-center gap-2 text-sm text-slate-400">
           <span className="relative flex h-3 w-3">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+            <span className={`absolute inline-flex h-full w-full rounded-full opacity-75 ${isTabActive ? "animate-ping bg-emerald-400" : "bg-slate-500"}`}></span>
+            <span className={`relative inline-flex rounded-full h-3 w-3 ${isTabActive ? "bg-emerald-500" : "bg-slate-500"}`}></span>
           </span>
-          System Online
+          {isTabActive ? "System Online" : "Paused (Background)"}
         </span>
       </div>
       

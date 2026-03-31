@@ -3,8 +3,14 @@
 
 import { motion } from "motion/react";
 import { BedDouble, Loader2, Lock } from "lucide-react";
-import { useState, useEffect } from "react";
-import { lockRoom, checkRoomStatus } from "@/actions/booking"; 
+import { useState, useEffect } from "react"; 
+import { lockRoom, checkRoomStatus } from "@/actions/booking";
+import { toast } from "react-hot-toast"; 
+
+// 🛑 THE ULTIMATE FIX: Module-level sets live completely outside React.
+// They survive Strict Mode, re-renders, and page transitions!
+const myBookedRooms = new Set<string>();
+const recentlyToasted = new Set<string>();
 
 type RoomProps = {
   room: { id: string; name: string; description: string; price: number; imageUrl: string; };
@@ -15,46 +21,69 @@ type RoomProps = {
 export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
   const [isLockedByOther, setIsLockedByOther] = useState(!initialAvailable); 
+  const [isTabActive, setIsTabActive] = useState(true);
 
   const formattedPrice = new Intl.NumberFormat("en-US", {
     style: "currency", currency: "USD",
   }).format(room.price / 100);
 
-  // --- THE BULLETPROOF REAL-TIME LISTENER ---
+  // --- 1. THE VISIBILITY TRACKER ---
   useEffect(() => {
-    // 1. THE STATUS CHECKER 
+    const handleVisibilityChange = () => {
+      setIsTabActive(document.visibilityState === 'visible');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  // --- 2. THE BULLETPROOF REAL-TIME LISTENER ---
+  useEffect(() => {
+    if (!isTabActive) return;
+
     const syncStatus = async () => {
-      // 🛑 CACHE BUSTER: Sending Date.now() forces Next.js to ignore the cache!
       const status = await checkRoomStatus(room.id, Date.now());
       const shouldBeLocked = status !== 'AVAILABLE';
-      
-      setIsLockedByOther((currentlyLocked) => {
-        if (currentlyLocked !== shouldBeLocked) return shouldBeLocked;
-        return currentlyLocked; 
-      });
+      setIsLockedByOther(shouldBeLocked);
     };
     
-    // Check immediately on load
-    syncStatus();
-    
-    // THE SUSPENDERS: Check every 10 seconds 
+    syncStatus(); 
     const healingInterval = setInterval(syncStatus, 10000);
 
-    // 2. THE BELT: Redis SSE Listener 
     const eventSource = new EventSource('/api/stream');
 
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       
-      if (data.roomId === room.id && (data.status === 'LOCKED' || data.status === 'BOOKED')) {
-        setIsLockedByOther(true);
-      }
-      
-      if (data.roomId === room.id && data.status === 'AVAILABLE') {
-        setIsLockedByOther(false);
-        setError(null);
+      if (data.roomId === room.id) {
+        if (data.status === 'LOCKED' || data.status === 'BOOKED') {
+          
+          // 🛑 FIX: Only toast if WE didn't click it, AND we haven't toasted it already!
+          if (!myBookedRooms.has(room.id) && !recentlyToasted.has(room.id)) {
+            recentlyToasted.add(room.id); // Lock the toast globally
+            
+            toast(`Someone just started booking the ${room.name}!`, {
+              id: room.id, 
+              icon: '🔥',
+              style: {
+                borderRadius: '10px',
+                background: '#1e293b',
+                color: '#fff',
+                border: '1px solid #334155'
+              },
+            });
+          }
+          setIsLockedByOther(true);
+        }
+        
+        if (data.status === 'AVAILABLE') {
+          // Room is free again! Clear the global locks so it can trigger in the future.
+          recentlyToasted.delete(room.id);
+          myBookedRooms.delete(room.id);
+          setIsLockedByOther(false);
+          setError(null);
+        }
       }
     };
 
@@ -66,16 +95,21 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
       eventSource.close();
       clearInterval(healingInterval); 
     };
-  }, [room.id]);
+  }, [room.id, isTabActive]);
 
   const handleBooking = async () => {
     setIsPending(true);
     setError(null);
+
+    // 🛑 FIX: Tag this room ID as "mine" instantly before contacting the server
+    myBookedRooms.add(room.id);
+
     const result = await lockRoom(room.id);
     
     if (result?.error) {
       setError(result.error);
       setIsPending(false);
+      myBookedRooms.delete(room.id); // If booking failed, remove the tag!
     }
   };
 
@@ -96,7 +130,6 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
           {formattedPrice} / night
         </div>
         
-        {/* Locked Overlay */}
         {isLockedByOther && (
           <div className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm flex items-center justify-center">
             <div className="bg-slate-900/90 text-red-400 px-4 py-2 rounded-full font-bold flex items-center gap-2 border border-red-900/50 shadow-2xl">
