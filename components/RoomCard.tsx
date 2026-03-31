@@ -4,7 +4,7 @@
 import { motion } from "motion/react";
 import { BedDouble, Loader2, Lock } from "lucide-react";
 import { useState, useEffect } from "react";
-import { lockRoom, checkRoomStatus } from "@/actions/booking"; // <-- Updated imports
+import { lockRoom, checkRoomStatus } from "@/actions/booking"; 
 
 type RoomProps = {
   room: { id: string; name: string; description: string; price: number; imageUrl: string; };
@@ -23,20 +23,27 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
     style: "currency", currency: "USD",
   }).format(room.price / 100);
 
-  // --- THE DISTRIBUTED SSE LISTENER + BACK-BUTTON FIX ---
+  // --- THE BULLETPROOF REAL-TIME LISTENER ---
   useEffect(() => {
-    // 1. THE BACK-BUTTON FIX: Immediately check the true database status on load
+    // 1. THE STATUS CHECKER (Runs on load, and then every 10 seconds)
     const syncStatus = async () => {
       const status = await checkRoomStatus(room.id);
-      if (status !== 'AVAILABLE') {
-        setIsLockedByOther(true);
-      } else {
-        setIsLockedByOther(false);
-      }
+      const shouldBeLocked = status !== 'AVAILABLE';
+      
+      // Only trigger a re-render if the status actually changed!
+      setIsLockedByOther((currentlyLocked) => {
+        if (currentlyLocked !== shouldBeLocked) return shouldBeLocked;
+        return currentlyLocked; 
+      });
     };
+    
+    // Check immediately on load (fixes the back-button cache issue)
     syncStatus();
+    
+    // THE SUSPENDERS: Check every 10 seconds to catch any missed Redis messages!
+    const healingInterval = setInterval(syncStatus, 10000);
 
-    // 2. THE SSE LISTENER: Listen for any future real-time updates via Redis
+    // 2. THE BELT: Redis SSE Listener for instant real-time updates
     const eventSource = new EventSource('/api/stream');
 
     eventSource.onmessage = (event) => {
@@ -52,14 +59,15 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
       }
     };
 
-    // Vercel will eventually sever the connection. 
-    // This silently handles the reconnect so the user never notices.
     eventSource.onerror = () => {
+      // Vercel dropped us, but the browser will auto-reconnect.
       console.log("Stream refreshing...");
-      // EventSource automatically attempts to reconnect on its own!
     };
 
-    return () => eventSource.close();
+    return () => {
+      eventSource.close();
+      clearInterval(healingInterval); // Clean up the polling interval
+    };
   }, [room.id]);
 
   const handleBooking = async () => {

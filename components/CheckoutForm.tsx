@@ -21,18 +21,33 @@ export default function CheckoutForm({ bookingId, lockedUntil }: Props) {
 
   // 2. The timer now listens to `expirationTime`
   useEffect(() => {
+    let hasExpired = false; // 🛑 The magic guard variable!
+
     const calculateTimeLeft = () => {
       const difference = new Date(expirationTime).getTime() - new Date().getTime();
+      
       if (difference <= 0) {
-        setStatus("expired");
-        expireBooking(bookingId);
+        // If it hits zero, make sure we haven't already expired it
+        if (!hasExpired) {
+          hasExpired = true; // Lock it down so it never fires again
+          setStatus("expired");
+          expireBooking(bookingId); // Tell the server ONCE
+        }
         return 0;
       }
       return Math.floor(difference / 1000);
     };
 
+    // Run once immediately so the clock doesn't flash "00:00" on load
     setTimeLeft(calculateTimeLeft());
-    const timer = setInterval(() => setTimeLeft(calculateTimeLeft()), 1000);
+    
+    // Start the interval
+    const timer = setInterval(() => {
+      // Only keep updating the clock if we haven't expired yet
+      if (!hasExpired) {
+        setTimeLeft(calculateTimeLeft());
+      }
+    }, 1000);
 
     return () => clearInterval(timer);
   }, [expirationTime, bookingId]); // <-- Dependency updated
