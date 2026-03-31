@@ -33,7 +33,7 @@ export async function lockRoom(roomId: string) {
     return { error: "Sorry, this room is currently locked or sold out." };
   }
 
-  const lockedUntil = new Date(Date.now() + 10 * 60 * 1000);
+  const lockedUntil = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
   
   const booking = await prisma.booking.create({
     data: {
@@ -102,4 +102,20 @@ export async function expireBooking(bookingId: string) {
     // 🚀 PUBLISH TO REDIS: Room is available again
     await redis.publish('room_updates', JSON.stringify({ roomId: booking.roomId, status: 'AVAILABLE' }));
   }
+}
+
+// 4. THE CACHE FIX: Quick check for the frontend
+export async function checkRoomStatus(roomId: string) {
+  const activeBooking = await prisma.booking.findFirst({
+    where: {
+      roomId: roomId,
+      OR: [
+        { status: "CONFIRMED" },
+        { status: "PENDING", lockedUntil: { gt: new Date() } }
+      ]
+    }
+  });
+
+  if (!activeBooking) return "AVAILABLE";
+  return activeBooking.status; // Returns "PENDING" or "CONFIRMED"
 }

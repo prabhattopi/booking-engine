@@ -4,7 +4,7 @@
 import { motion } from "motion/react";
 import { BedDouble, Loader2, Lock } from "lucide-react";
 import { useState, useEffect } from "react";
-import { lockRoom } from "@/actions/booking";
+import { lockRoom, checkRoomStatus } from "@/actions/booking"; // <-- Updated imports
 
 type RoomProps = {
   room: { id: string; name: string; description: string; price: number; imageUrl: string; };
@@ -23,7 +23,20 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
     style: "currency", currency: "USD",
   }).format(room.price / 100);
 
+  // --- THE DISTRIBUTED SSE LISTENER + BACK-BUTTON FIX ---
   useEffect(() => {
+    // 1. THE BACK-BUTTON FIX: Immediately check the true database status on load
+    const syncStatus = async () => {
+      const status = await checkRoomStatus(room.id);
+      if (status !== 'AVAILABLE') {
+        setIsLockedByOther(true);
+      } else {
+        setIsLockedByOther(false);
+      }
+    };
+    syncStatus();
+
+    // 2. THE SSE LISTENER: Listen for any future real-time updates via Redis
     const eventSource = new EventSource('/api/stream');
 
     eventSource.onmessage = (event) => {
