@@ -16,7 +16,6 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
   const [isPending, setIsPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Initialize the lock state based on what the server told us!
   const [isLockedByOther, setIsLockedByOther] = useState(!initialAvailable); 
 
   const formattedPrice = new Intl.NumberFormat("en-US", {
@@ -25,25 +24,25 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
 
   // --- THE BULLETPROOF REAL-TIME LISTENER ---
   useEffect(() => {
-    // 1. THE STATUS CHECKER (Runs on load, and then every 10 seconds)
+    // 1. THE STATUS CHECKER 
     const syncStatus = async () => {
-      const status = await checkRoomStatus(room.id);
+      // 🛑 CACHE BUSTER: Sending Date.now() forces Next.js to ignore the cache!
+      const status = await checkRoomStatus(room.id, Date.now());
       const shouldBeLocked = status !== 'AVAILABLE';
       
-      // Only trigger a re-render if the status actually changed!
       setIsLockedByOther((currentlyLocked) => {
         if (currentlyLocked !== shouldBeLocked) return shouldBeLocked;
         return currentlyLocked; 
       });
     };
     
-    // Check immediately on load (fixes the back-button cache issue)
+    // Check immediately on load
     syncStatus();
     
-    // THE SUSPENDERS: Check every 10 seconds to catch any missed Redis messages!
+    // THE SUSPENDERS: Check every 10 seconds 
     const healingInterval = setInterval(syncStatus, 10000);
 
-    // 2. THE BELT: Redis SSE Listener for instant real-time updates
+    // 2. THE BELT: Redis SSE Listener 
     const eventSource = new EventSource('/api/stream');
 
     eventSource.onmessage = (event) => {
@@ -60,13 +59,12 @@ export default function RoomCard({ room, initialAvailable, index }: RoomProps) {
     };
 
     eventSource.onerror = () => {
-      // Vercel dropped us, but the browser will auto-reconnect.
       console.log("Stream refreshing...");
     };
 
     return () => {
       eventSource.close();
-      clearInterval(healingInterval); // Clean up the polling interval
+      clearInterval(healingInterval); 
     };
   }, [room.id]);
 

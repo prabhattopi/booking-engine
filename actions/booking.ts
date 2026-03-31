@@ -4,7 +4,8 @@
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
-import { redis } from "@/lib/redis"; // <-- Import Redis!
+import { redis } from "@/lib/redis";
+import { unstable_noStore as noStore } from "next/cache"; // 🛑 THE CACHE KILLER
 
 // 1. Initial Booking Lock
 export async function lockRoom(roomId: string) {
@@ -67,18 +68,22 @@ export async function processPayment(bookingId: string, cvv: string) {
   }
 
   if (cvv === "999") {
-    const twoMinutesMs = 2 * 60 * 1000;
-    const strictRetryTime = new Date(now.getTime() + twoMinutesMs);
+    const twoMinutesFromNow = new Date(now.getTime() + 2 * 60 * 1000);
     
-    await prisma.booking.update({
-      where: { id: bookingId },
-      data: { lockedUntil: strictRetryTime }
-    });
+    // The Bug Fix: Only reduce time if they have MORE than 2 mins left!
+    if (booking.lockedUntil > twoMinutesFromNow) {
+      await prisma.booking.update({
+        where: { id: bookingId },
+        data: { lockedUntil: twoMinutesFromNow }
+      });
 
-    return { 
-      error: "Payment declined. We've adjusted your hold to 2:00 minutes so you can try a different card.",
-      newLockedUntil: strictRetryTime 
-    };
+      return { 
+        error: "Payment declined. We've reduced your hold to 2:00 minutes.",
+        newLockedUntil: twoMinutesFromNow 
+      };
+    } else {
+      return { error: "Payment declined. Please try a different card quickly!" };
+    }
   }
 
   await prisma.booking.update({
@@ -104,8 +109,10 @@ export async function expireBooking(bookingId: string) {
   }
 }
 
-// 4. THE CACHE FIX: Quick check for the frontend
-export async function checkRoomStatus(roomId: string) {
+// 4. THE CACHE FIX: We added a _timestamp parameter to trick the browser!
+export async function checkRoomStatus(roomId: string, _timestamp?: number) {
+  noStore(); // 🛑 Tells Vercel NEVER to cache this server response
+
   const activeBooking = await prisma.booking.findFirst({
     where: {
       roomId: roomId,
